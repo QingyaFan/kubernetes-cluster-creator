@@ -243,15 +243,20 @@ done
 #                                                             #
 #-------------------------------------------------------------#
 
+cd "${BASE_PATH}" || return
 tar -zxvf ./bins/etcd-v3.3.13-linux-amd64.tar.gz
 chmod +x ./etcd-v3.3.13-linux-amd64/etcd*
+chmod 644 ./systemd/etcd.service
+
+export ETCD_IPS=("${ALL_SERVER_IPS[@]:0:3}")
+export ETCD_ENDPOINTS="https://${ALL_SERVER_IPS[0]}:2379,https://${ALL_SERVER_IPS[1]}:2379,https://${ALL_SERVER_IPS[2]}:2379"
+export ETCD_NODES="etcd-node0=https://${ALL_SERVER_IPS[0]}:2380,etcd-node1=https://${ALL_SERVER_IPS[1]}:2380,etcd-node2=https://${ALL_SERVER_IPS[2]}:2380"
 
 ## 根据机器总数，依次生成etcd的配置文件
 ## 并将配置文件发送到相应服务器，安装etcd
 for i in "${!ETCD_IPS[@]}"
 do
-
-scp ./etcd-v3.3.8-linux-amd64/etcd* "${USER}@${ETCD_IPS[$i]}:/usr/local/bin/"
+scp ./etcd-v3.3.13-linux-amd64/etcd* "${USER}@${ETCD_IPS[$i]}:/usr/local/bin/"
 ssh "${USER}@${ETCD_IPS[$i]}" "mkdir -p /etc/etcd"
 order=$((i))
 echo "etcd-node${order}"
@@ -265,7 +270,6 @@ EOF
 scp ./systemd/etcd-node"${order}".conf "${USER}@${ETCD_IPS[$i]}:/etc/etcd/etcd.conf"
 scp ./systemd/etcd.service "${USER}@${ETCD_IPS[$i]}:${SERVICE_UNIT_LOCATION}/etcd.service"
 ssh "${USER}@${ETCD_IPS[$i]}" "rm -rf /var/lib/etcd || true && mkdir -p /var/lib/etcd && systemctl daemon-reload && systemctl enable etcd && systemctl start etcd &"
-
 done
 
 echo "waiting for etcd cluster starting"
@@ -288,7 +292,7 @@ printf "etcd install success \n \n"
 #-------------------------------------------------------------#
 
 printf "\n starting install flannel ... \n \n "
-cd "${BASE_DIR}" || return
+cd "${BASE_PATH}" || return
 
 tar -zxvf ./bins/flannel-v0.11.0-linux-amd64.tar.gz
 chmod +x flanneld
@@ -320,8 +324,10 @@ do
   scp mk-docker-opts.sh "${USER}@${node}:/usr/local/bin/"
   scp ./systemd/flanneld.service "${USER}@${node}:${SERVICE_UNIT_LOCATION}"
   scp ./flanneld.conf "${USER}@${node}:/etc/sysconfig/flanneld.conf"
-  ssh "${USER}@${node}" "systemctl daemon-reload && systemctl enable flanneld && systemctl start flanneld && systemctl status flanneld &"
+  ssh "${USER}@${node}" "systemctl daemon-reload && systemctl enable flanneld && systemctl start flanneld"
 done
+
+sleep 10 # 确保flanneld集群已经启动完成
 
 # 检查docker子网络状态
 etcdctl --endpoints="${ETCD_ENDPOINTS}" \
@@ -338,6 +344,7 @@ etcdctl --endpoints="${ETCD_ENDPOINTS}" \
 #                                                             #
 #-------------------------------------------------------------#
 
+cd "${BASE_PATH}" || return
 tar zxvf ./bins/docker-18.09.6.tgz
 cat > ./daemon.json << EOF
 {
@@ -363,8 +370,7 @@ scp ./bins/docker-compose-Linux-x86_64 "${USER}@${PG_SERVER}:/usr/local/bin/dock
 #                                                             #
 #-------------------------------------------------------------#
 
-cd "${BASE_DIR}" || return
-
+cd "${BASE_PATH}" || return
 cp -rf kubernetes/server/bin/* /usr/local/bin/
 
 cat > ./systemd/kube-config.conf <<EOF
