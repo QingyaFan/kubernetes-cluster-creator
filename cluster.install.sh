@@ -1,6 +1,6 @@
 #!/bin/bash
 
-set -x
+set -exo pipefail
 
 cd "${BASE_PATH}" || return
 
@@ -243,8 +243,8 @@ done
 #                                                             #
 #-------------------------------------------------------------#
 
-tar -zxvf ./bins/etcd-v3.3.8-linux-amd64.tar.gz
-chmod +x ./etcd-v3.3.8-linux-amd64/etcd*
+tar -zxvf ./bins/etcd-v3.3.13-linux-amd64.tar.gz
+chmod +x ./etcd-v3.3.13-linux-amd64/etcd*
 
 ## 根据机器总数，依次生成etcd的配置文件
 ## 并将配置文件发送到相应服务器，安装etcd
@@ -268,13 +268,16 @@ ssh "${USER}@${ETCD_IPS[$i]}" "rm -rf /var/lib/etcd || true && mkdir -p /var/lib
 
 done
 
+echo "waiting for etcd cluster starting"
+sleep 10  # 保证etcd集群已经启动
+
 etcdctl \
   --ca-file=/etc/kubernetes/ssl/ca.pem \
   --cert-file=/etc/kubernetes/ssl/kubernetes.pem \
   --key-file=/etc/kubernetes/ssl/kubernetes-key.pem \
   cluster-health
 
-echo etcd install success
+printf "etcd install success \n \n"
 
 
 
@@ -284,9 +287,10 @@ echo etcd install success
 #                                                             #
 #-------------------------------------------------------------#
 
+printf "\n starting install flannel ... \n \n "
 cd "${BASE_DIR}" || return
 
-tar -zxvf ./bins/flannel-v0.10.0-linux-amd64.tar.gz
+tar -zxvf ./bins/flannel-v0.11.0-linux-amd64.tar.gz
 chmod +x flanneld
 chmod +x mk-docker-opts.sh
 cat > flanneld.conf <<EOF
@@ -334,7 +338,7 @@ etcdctl --endpoints="${ETCD_ENDPOINTS}" \
 #                                                             #
 #-------------------------------------------------------------#
 
-tar zxvf ./bins/docker-17.12.1-ce.tgz
+tar zxvf ./bins/docker-18.09.6.tgz
 cat > ./daemon.json << EOF
 {
   "graph": "${DOCKER_LOCATION}"

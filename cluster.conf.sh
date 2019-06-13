@@ -1,6 +1,6 @@
 #!/bin/bash
 
-set -x
+set -exo pipefail
 
 # 根据集群服务器实际分配情况配置环境变量，包括Master、Nodes服务器
 USER=root
