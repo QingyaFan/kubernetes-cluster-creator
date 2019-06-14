@@ -244,19 +244,21 @@ done
 #-------------------------------------------------------------#
 
 cd "${BASE_PATH}" || return
-tar -zxvf ./bins/etcd-v3.3.13-linux-amd64.tar.gz
-chmod +x ./etcd-v3.3.13-linux-amd64/etcd*
-chmod 644 ./systemd/etcd.service
 
 export ETCD_IPS=("${ALL_SERVER_IPS[@]:0:3}")
 export ETCD_ENDPOINTS="https://${ALL_SERVER_IPS[0]}:2379,https://${ALL_SERVER_IPS[1]}:2379,https://${ALL_SERVER_IPS[2]}:2379"
 export ETCD_NODES="etcd-node0=https://${ALL_SERVER_IPS[0]}:2380,etcd-node1=https://${ALL_SERVER_IPS[1]}:2380,etcd-node2=https://${ALL_SERVER_IPS[2]}:2380"
 
+tar -C ./bins -zxvf ./bins/etcd-v3.3.13-linux-amd64.tar.gz
+chmod +x ./bins/etcd-v3.3.13-linux-amd64/etcd*
+chmod 644 ./systemd/etcd.service
+
 ## 根据机器总数，依次生成etcd的配置文件
 ## 并将配置文件发送到相应服务器，安装etcd
 for i in "${!ETCD_IPS[@]}"
 do
-scp ./etcd-v3.3.13-linux-amd64/etcd* "${USER}@${ETCD_IPS[$i]}:/usr/local/bin/"
+scp ./bins/etcd-v3.3.13-linux-amd64/etcd "${USER}@${ETCD_IPS[$i]}:/usr/local/bin"
+scp ./bins/etcd-v3.3.13-linux-amd64/etcdctl "${USER}@${ETCD_IPS[$i]}:/usr/local/bin"
 ssh "${USER}@${ETCD_IPS[$i]}" "mkdir -p /etc/etcd"
 order=$((i))
 echo "etcd-node${order}"
