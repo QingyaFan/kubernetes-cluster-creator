@@ -239,7 +239,7 @@ done
 
 #-------------------------------------------------------------#
 #                                                             #
-######                       安装 ETCD                    ######
+#                           安装 ETCD                          #
 #                                                             #
 #-------------------------------------------------------------#
 
@@ -269,7 +269,8 @@ EOF
 
 scp ./systemd/etcd-node"${order}".conf "${USER}@${ETCD_IPS[$i]}:/etc/etcd/etcd.conf"
 scp ./systemd/etcd.service "${USER}@${ETCD_IPS[$i]}:${SERVICE_UNIT_LOCATION}/etcd.service"
-ssh "${USER}@${ETCD_IPS[$i]}" "rm -rf /var/lib/etcd || true && mkdir -p /var/lib/etcd && systemctl daemon-reload && systemctl enable etcd && systemctl start etcd &"
+ssh "${USER}@${ETCD_IPS[$i]}" "systemctl daemon-reload && mkdir -p /var/lib/etcd && systemctl enable etcd && systemctl start etcd &"
+sleep 5
 done
 
 echo "waiting for etcd cluster starting"
@@ -287,7 +288,7 @@ printf "etcd install success \n \n"
 
 #-------------------------------------------------------------#
 #                                                             #
-######                     安装 FLANNEL                   ######
+#                           安装 FLANNEL                       #
 #                                                             #
 #-------------------------------------------------------------#
 
@@ -320,8 +321,8 @@ systemctl daemon-reload && systemctl enable flanneld && systemctl start flanneld
 
 for node in "${NODE_IPS[@]}"
 do
-  scp flanneld "${USER}@${node}:/usr/local/bin/"
-  scp mk-docker-opts.sh "${USER}@${node}:/usr/local/bin/"
+  scp flanneld "${USER}@${node}:/usr/local/bin"
+  scp mk-docker-opts.sh "${USER}@${node}:/usr/local/bin"
   scp ./systemd/flanneld.service "${USER}@${node}:${SERVICE_UNIT_LOCATION}"
   scp ./flanneld.conf "${USER}@${node}:/etc/sysconfig/flanneld.conf"
   ssh "${USER}@${node}" "systemctl daemon-reload && systemctl enable flanneld && systemctl start flanneld"
@@ -340,7 +341,7 @@ etcdctl --endpoints="${ETCD_ENDPOINTS}" \
 
 #-------------------------------------------------------------#
 #                                                             #
-######                      安装 DOCKER                   ######
+#                           安装 DOCKER                        #
 #                                                             #
 #-------------------------------------------------------------#
 
@@ -360,13 +361,11 @@ do
   scp ./systemd/docker.service "${USER}@${node}:${SERVICE_UNIT_LOCATION}/"
   ssh "${USER}@${node}" "systemctl daemon-reload && systemctl enable docker.service &&systemctl start docker.service"
 done
-chmod +x ./bins/docker-compose-Linux-x86_64
-scp ./bins/docker-compose-Linux-x86_64 "${USER}@${PG_SERVER}:/usr/local/bin/docker-compose"
 
 
 #-------------------------------------------------------------#
 #                                                             #
-######                   安装 K8S 各个组件                 ######
+#                        安装 K8S 各个组件                      #
 #                                                             #
 #-------------------------------------------------------------#
 
