@@ -155,9 +155,9 @@ done
 
 ## 创建TLS Bootstrapping Token
 cd .. || return
-tar zxvf ./bins/kubernetes-server-linux-amd64.tar.gz
-chmod +x kubernetes/server/bin/kubectl
-cp -f kubernetes/server/bin/kubectl /usr/local/bin/kubectl
+tar -C ./bins -zxvf ./bins/kubernetes-server-linux-amd64.tar.gz
+chmod +x ./bins/kubernetes/server/bin/kubectl
+cp -f ./bins/kubernetes/server/bin/kubectl /usr/local/bin/kubectl
 
 ### 创建kubectl kubeconfig文件
 export KUBE_APISERVER="https://${MASTER_IP}:6443"
@@ -253,13 +253,19 @@ tar -C ./bins -zxvf ./bins/etcd-v3.3.13-linux-amd64.tar.gz
 chmod +x ./bins/etcd-v3.3.13-linux-amd64/etcd*
 chmod 644 ./systemd/etcd.service
 
+## 同步时间
+for node in "${ETCD_IPS[@]}"
+do
+  ssh "${USER}@${node}" "rm -f /etc/localtime && ln -s /usr/share/zoneinfo/Asia/Shanghai /etc/localtime"
+done
+
+
 ## 根据机器总数，依次生成etcd的配置文件
 ## 并将配置文件发送到相应服务器，安装etcd
 for i in "${!ETCD_IPS[@]}"
 do
-scp ./bins/etcd-v3.3.13-linux-amd64/etcd "${USER}@${ETCD_IPS[$i]}:/usr/local/bin"
-scp ./bins/etcd-v3.3.13-linux-amd64/etcdctl "${USER}@${ETCD_IPS[$i]}:/usr/local/bin"
-ssh "${USER}@${ETCD_IPS[$i]}" "mkdir -p /etc/etcd"
+scp ./bins/etcd-v3.3.13-linux-amd64/etcd* "${USER}@${ETCD_IPS[$i]}:/usr/local/bin"
+ssh "${USER}@${ETCD_IPS[$i]}" "mkdir -p /etc/etcd && mkdir -p /var/lib/etcd"
 order=$((i))
 echo "etcd-node${order}"
 
@@ -271,11 +277,17 @@ EOF
 
 scp ./systemd/etcd-node"${order}".conf "${USER}@${ETCD_IPS[$i]}:/etc/etcd/etcd.conf"
 scp ./systemd/etcd.service "${USER}@${ETCD_IPS[$i]}:${SERVICE_UNIT_LOCATION}/etcd.service"
-ssh "${USER}@${ETCD_IPS[$i]}" "systemctl daemon-reload && mkdir -p /var/lib/etcd && systemctl enable etcd && systemctl start etcd &"
-sleep 5
 done
 
-echo "waiting for etcd cluster starting"
+sleep 5
+
+printf "starting etcd cluster ··· \n\n"
+for node in "${ETCD_IPS[@]}"
+do
+  ssh "${USER}@${node}" "systemctl daemon-reload && systemctl enable etcd && systemctl start etcd &"
+done
+
+
 sleep 10  # 保证etcd集群已经启动
 
 etcdctl \
@@ -284,7 +296,7 @@ etcdctl \
   --key-file=/etc/kubernetes/ssl/kubernetes-key.pem \
   cluster-health
 
-printf "etcd install success \n \n"
+printf "etcd cluster started! \n \n"
 
 
 
@@ -372,7 +384,7 @@ done
 #-------------------------------------------------------------#
 
 cd "${BASE_PATH}" || return
-cp -rf kubernetes/server/bin/* /usr/local/bin/
+cp -rf ./bins/kubernetes/server/bin/* /usr/local/bin/
 
 cat > ./systemd/kube-config.conf <<EOF
 KUBE_LOGTOSTDERR="--logtostderr=true"
@@ -393,26 +405,17 @@ KUBE_ADMISSION_CONTROL="--admission-control=ServiceAccount,NamespaceLifecycle,Li
 KUBE_API_ARGS="--authorization-mode=RBAC --runtime-config=rbac.authorization.k8s.io/v1beta1 --kubelet-https=true --enable-bootstrap-token-auth --token-auth-file=/etc/kubernetes/token.csv --service-node-port-range=30000-32767 --tls-cert-file=/etc/kubernetes/ssl/kubernetes.pem --tls-private-key-file=/etc/kubernetes/ssl/kubernetes-key.pem --client-ca-file=/etc/kubernetes/ssl/ca.pem --service-account-key-file=/etc/kubernetes/ssl/ca-key.pem --etcd-cafile=/etc/kubernetes/ssl/ca.pem --etcd-certfile=/etc/kubernetes/ssl/kubernetes.pem --etcd-keyfile=/etc/kubernetes/ssl/kubernetes-key.pem --enable-swagger-ui=true --apiserver-count=3 --audit-log-maxage=30 --audit-log-maxbackup=3 --audit-log-maxsize=100 --audit-log-path=/var/lib/audit.log --event-ttl=1h"
 EOF
 cp -f ./systemd/kube-apiserver.conf /etc/kubernetes/
-systemctl daemon-reload
-systemctl enable kube-apiserver
-systemctl start kube-apiserver
-systemctl status kube-apiserver
+systemctl daemon-reload && systemctl enable kube-apiserver && systemctl start kube-apiserver && systemctl status kube-apiserver
 
 ### 安装kube-controller-manager
-cp -f systemd/kube-controller-manager.service /usr/lib/systemd/system/
-cp -f systemd/kube-controller-manager.conf /etc/kubernetes/
-systemctl daemon-reload
-systemctl enable kube-controller-manager
-systemctl start kube-controller-manager
-systemctl status kube-controller-manager
+cp -f ./systemd/kube-controller-manager.service /usr/lib/systemd/system/
+cp -f ./systemd/kube-controller-manager.conf /etc/kubernetes/
+systemctl daemon-reload && systemctl enable kube-controller-manager && systemctl start kube-controller-manager && systemctl status kube-controller-manager
 
 ## 安装kube-scheduler
-cp -f systemd/kube-scheduler.service /usr/lib/systemd/system/
-cp -f systemd/kube-scheduler.conf /etc/kubernetes/
-systemctl daemon-reload
-systemctl enable kube-scheduler
-systemctl start kube-scheduler
-systemctl status kube-scheduler
+cp -f ./systemd/kube-scheduler.service /usr/lib/systemd/system/
+cp -f ./systemd/kube-scheduler.conf /etc/kubernetes/
+systemctl daemon-reload && systemctl enable kube-scheduler && systemctl start kube-scheduler && systemctl status kube-scheduler
 
 ## confirm master is healthy
 kubectl get componentstatuses
@@ -433,7 +436,7 @@ kubectl create clusterrolebinding kubelet-bootstrap \
 
 ## 子节点安装k8s各个组件
 ###### 部署kubelet和kube-proxy ######
-cd "${BASE_DIR}" || return
+cd "${BASE_PATH}" || return
 for node in "${NODE_IPS[@]}"
 do
 
@@ -442,7 +445,8 @@ do
 ### 当kubelet启动后就会自动加入的集群中
 scp ~/.kube/config "${USER}@${node}:/etc/kubernetes/kubelet.kubeconfig"
 
-scp kubernetes/server/bin/kubelet kubernetes/server/bin/kube-proxy "${USER}@${node}:/usr/local/bin/"
+scp ./bins/kubernetes/server/bin/kubelet "${USER}@${node}:/usr/local/bin/"
+scp ./bins/kubernetes/server/bin/kube-proxy "${USER}@${node}:/usr/local/bin/"
 
 #### install kubelet
 cat > ./systemd/kubelet.conf  << EOF

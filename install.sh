@@ -7,9 +7,9 @@ unalias cp || true
 BASE_PATH="$(pwd)" && export BASE_PATH
 # 根据集群服务器实际分配情况配置环境变量，包括Master、Nodes服务器
 USER=root
-ALL_SERVER_IPS=("192.168.31.81" "192.168.31.82" "192.168.31.83")
-MASTER_IP=192.168.31.81
-NODE_IPS=("192.168.31.81" "192.168.31.82" "192.168.31.83")
+ALL_SERVER_IPS=("10.10.0.82" "10.10.0.83" "10.10.0.84")
+MASTER_IP=10.10.0.82
+NODE_IPS=("10.10.0.82" "10.10.0.83" "10.10.0.84")
 
 DOCKER_LOCATION=/home/docker
 # SERVICE_UNIT_LOCATION=/lib/systemd/system # for ubuntu

@@ -8,7 +8,7 @@ for node in "${ALL_SERVER_IPS[@]}"
 do
 ssh-copy-id -i ~/.ssh/id_rsa.pub "${node}"
 ssh "${USER}@${node}" "systemctl stop firewalld && systemctl disable firewalld"
-ssh "${USER}@${node}" "setenforce 0 && sed -i 's/SELINUX=enforcing/SELINUX=disabled/' /etc/selinux/config"
+ssh "${USER}@${node}" "setenforce 0 | true && sed -i 's/SELINUX=enforcing/SELINUX=disabled/' /etc/selinux/config"
 done
 
 # 检查集群中所有Node是否开启了swap，若开启，则需要关闭，并禁止swap功能
