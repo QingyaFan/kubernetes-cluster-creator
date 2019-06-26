@@ -315,7 +315,7 @@ chmod +x mk-docker-opts.sh
 cat > flanneld.conf <<EOF
 FLANNEL_ETCD_ENDPOINTS="${ETCD_ENDPOINTS}"
 FLANNEL_ETCD_PREFIX="/kube-centos/network"
-FLANNEL_OPTIONS="-etcd-cafile=/etc/kubernetes/ssl/ca.pem -etcd-certfile=/etc/kubernetes/ssl/kubernetes.pem -etcd-keyfile=/etc/kubernetes/ssl/kubernetes-key.pem"
+FLANNEL_OPTIONS="-etcd-cafile=/etc/kubernetes/ssl/ca.pem -etcd-certfile=/etc/kubernetes/ssl/kubernetes.pem -etcd-keyfile=/etc/kubernetes/ssl/kubernetes-key.pem --iface-regex=eth*|enp*"
 EOF
 
 # 在etcd中注册docker到子网络
