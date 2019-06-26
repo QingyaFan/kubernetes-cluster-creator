@@ -420,11 +420,6 @@ systemctl daemon-reload && systemctl enable kube-scheduler && systemctl start ku
 ## confirm master is healthy
 kubectl get componentstatuses
 
-## 建立拉取镜像凭证，在线部署使用
-# kubectl create secret docker-registry regsecret --namespace=default --docker-server=registry.cn-beijing.aliyuncs.com --docker-username=admin@geohey.com --docker-password= --docker-email=fanqy@geohey.com || true
-# kubectl create secret docker-registry regsecret --namespace=kube-public --docker-server=registry.cn-beijing.aliyuncs.com --docker-username=admin@geohey.com --docker-password= --docker-email=fanqy@geohey.com || true
-# kubectl create secret docker-registry regsecret --namespace=kube-system --docker-server=registry.cn-beijing.aliyuncs.com --docker-username=admin@geohey.com --docker-password= --docker-email=fanqy@geohey.com || true
-
 ### 将 bootstrap token 文件中的 kubelet-bootstrap 用户赋予 system:node-bootstrapper cluster 角色(role)
 ### kubelet 才能有权限创建认证请求(certificate signing requests)
 cd /etc/kubernetes || return 
