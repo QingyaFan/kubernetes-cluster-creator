@@ -284,7 +284,7 @@ sleep 5
 printf "starting etcd cluster ··· \n\n"
 for node in "${ETCD_IPS[@]}"
 do
-  ssh "${USER}@${node}" "systemctl daemon-reload && systemctl enable etcd && systemctl start etcd &"
+  ssh "${USER}@${node}" "systemctl daemon-reload && systemctl enable etcd && systemctl start etcd || true"
 done
 
 
@@ -464,16 +464,3 @@ scp ./kube-proxy.conf "${USER}@${node}:/etc/kubernetes/"
 scp systemd/kube-proxy.service "${USER}@${node}:/usr/lib/systemd/system/"
 ssh "${USER}@${node}" "systemctl daemon-reload && systemctl enable kube-proxy && systemctl start kube-proxy &"
 done
-
-
-## 安装集群基础服务 DNS & INGRESS-CONTROLLER
-for node in "${NODE_IPS[@]}"
-do
-scp -r ./images/common "${USER}@${node}:~/"
-ssh "${USER}@${node}" "cd ~/common && ls | xargs -n 1 docker load -i"
-done
-kubectl apply -f apps/common/rbac-config.yaml
-kubectl apply -f apps/common/kube-dns.yaml
-kubectl apply -f apps/common/nginx-ingress.yaml
-
-echo "kubernetes cluster installed and actived successfully!"
