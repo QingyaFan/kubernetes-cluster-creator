@@ -460,7 +460,7 @@ scp ./systemd/kube-config.conf "${USER}@${node}:/etc/kubernetes/"
 scp ./systemd/kubelet.conf "${USER}@${node}:/etc/kubernetes/"
 scp systemd/kubelet.service "${USER}@${node}:/usr/lib/systemd/system/"
 ssh "${USER}@${node}" "mkdir -p /var/lib/kubelet"
-ssh "${USER}@${node}" "systemctl daemon-reload && systemctl enable kubelet && systemctl start kubelet &"
+ssh "${USER}@${node}" "systemctl daemon-reload && systemctl enable kubelet && systemctl start kubelet"
 
 #### install kube-proxy
 cat > ./kube-proxy.conf  << EOF
@@ -468,5 +468,5 @@ KUBE_PROXY_ARGS="--bind-address=${node} --hostname-override=${node} --kubeconfig
 EOF
 scp ./kube-proxy.conf "${USER}@${node}:/etc/kubernetes/"
 scp systemd/kube-proxy.service "${USER}@${node}:/usr/lib/systemd/system/"
-ssh "${USER}@${node}" "systemctl daemon-reload && systemctl enable kube-proxy && systemctl start kube-proxy &"
+ssh "${USER}@${node}" "systemctl daemon-reload && systemctl enable kube-proxy && systemctl start kube-proxy"
 done
