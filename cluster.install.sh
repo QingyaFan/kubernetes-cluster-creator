@@ -253,12 +253,18 @@ tar -C ./bins -zxvf ./bins/etcd-v3.3.13-linux-amd64.tar.gz
 chmod +x ./bins/etcd-v3.3.13-linux-amd64/etcd*
 chmod 644 ./systemd/etcd.service
 
-## 同步时间
+## 集群服务器若时间不同步，会导致etcd启动不正常，因此需要同步时间
+## 安装环境可能离线，在线的时间服务器不可用，因此时间以 master 节点为准
+yum install -y ./bins/ntpserver/* || true
+sed -i '/centos.pool.ntp.org/d' /etc/ntp.conf
+sed -i '/Please consider joining the pool/a server 127.127.1.0 iburst' /etc/ntp.conf
+systemctl restart ntpd
 for node in "${ETCD_IPS[@]}"
 do
-  ssh "${USER}@${node}" "rm -f /etc/localtime && ln -s /usr/share/zoneinfo/Asia/Shanghai /etc/localtime"
+  scp -r ./bins/ntpserver "${USER}@${node}:~/"
+  ssh "${USER}@${node}" "yum install -y ~/ntpserver/* || true"
+  ssh "${USER}@${node}" "ntpdate ${MASTER_IP} || true"
 done
-
 
 ## 根据机器总数，依次生成etcd的配置文件
 ## 并将配置文件发送到相应服务器，安装etcd
