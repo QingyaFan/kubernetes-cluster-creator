@@ -2,7 +2,7 @@
 
 set -exo pipefail
 
-# 配置集群中Master节点可以无需验证访问各个服务器节点
+# config master can access node without auth
 ssh-keygen
 for node in "${ALL_SERVER_IPS[@]}"
 do
@@ -11,7 +11,7 @@ ssh "${USER}@${node}" "systemctl stop firewalld && systemctl disable firewalld"
 ssh "${USER}@${node}" "setenforce 0 | true && sed -i 's/SELINUX=enforcing/SELINUX=disabled/' /etc/selinux/config"
 done
 
-# 检查集群中所有Node是否开启了swap，若开启，则需要关闭，并禁止swap功能
+# shutdown swap in all node
 cat > ./shutdown_swap.sh <<'EOF'
 #!/bin/sh
 

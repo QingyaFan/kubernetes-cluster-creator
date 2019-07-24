@@ -1,13 +1,13 @@
 # kubernetes-cluster-creator
 
-该安装脚本针对纯离线环境安装kubernetes集群的情景，有如下优点：
+The script mainly foucus on the offline installation of the kubernetes cluster. As oppose to other tools, it has some main advantage:
 
-- 纯离线环境部署kubernetes；
-- 自动关闭防火墙；
-- 自动关闭node节点swap，保证kubelet可用；
-- 使用centos7最小化安装通过测试，因此无需担心centos不同安装版造成的差异。
+- can work in offline environment；
+- can automatically shutdown firewall；
+- shutdown swap to ensure kubelet working；
+- test on centos minimal installation.
 
-## 使用方法
+## Usage
 
-1. 根据服务器的角色分配，配置`cluster.conf.sh`中的IP；
-2. 运行install.sh，`bash ./install.sh`。
+1. config role in the `cluster.conf.sh`;
+2. run install.sh，`bash ./install.sh`。

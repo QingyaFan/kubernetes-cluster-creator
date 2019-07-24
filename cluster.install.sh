@@ -4,20 +4,18 @@ set -exo pipefail
 
 cd "${BASE_PATH}" || return
 
-#-------------------------------------------------------------#
-#                                                             #
-#      生成集群通信证书，保证集群内使用加密通信                      #
-#                                                             #
-#-------------------------------------------------------------#
+#----------------------------------------------#
+#       generate cluster certificate           #
+#----------------------------------------------#
 
-## 安装CFSSL证书工具
+## install CFSSL tools
 chmod +x ./bins/cfssl*
 cp -rf ./bins/cfssl_linux-amd64 /usr/local/bin/cfssl
 cp -rf ./bins/cfssl-certinfo_linux-amd64 /usr/local/bin/cfssl-certinfo
 cp -rf ./bins/cfssljson_linux-amd64 /usr/local/bin/cfssljson
 
-## 在master节点生成证书，并分发到各个node节点
-### 创建CA证书
+## generate all certificate, then distribute to all nodes
+### generate CA
 cd ./ssl && rm -rf ./* || return
 cfssl print-defaults config > config.json
 cfssl print-defaults csr > csr.json
@@ -65,7 +63,7 @@ EOF
 cfssl gencert -initca ca-csr.json | cfssljson -bare ca
 
 
-### 创建Kubernetes证书
+### create Kubernetes certificate
 cat > kubernetes-csr.json <<EOF
 {
     "CN": "kubernetes",
@@ -93,14 +91,15 @@ cat > kubernetes-csr.json <<EOF
     ]
 }
 EOF
-## 将集群配置的服务器IP添加到kubernetes-csr.json中
+
+## add all server ips to kubernetes-csr.json
 for node in "${ALL_SERVER_IPS[@]}"
 do
 sed -i "/\"127\.0\.0\.1\"\,/a \"${node}\"\," kubernetes-csr.json
 done
 cfssl gencert -ca=ca.pem -ca-key=ca-key.pem -config=ca-config.json -profile=kubernetes kubernetes-csr.json | cfssljson -bare kubernetes
 
-### 创建admin证书
+### create admin certificate
 cat > admin-csr.json <<EOF
 {
   "CN": "admin",
@@ -122,7 +121,7 @@ cat > admin-csr.json <<EOF
 EOF
 cfssl gencert -ca=ca.pem -ca-key=ca-key.pem -config=ca-config.json -profile=kubernetes admin-csr.json | cfssljson -bare admin
 
-### 创建kube-proxy证书
+### create kube-proxy certificate
 cat > kube-proxy-csr.json <<EOF
 {
   "CN": "system:kube-proxy",
@@ -144,7 +143,7 @@ cat > kube-proxy-csr.json <<EOF
 EOF
 cfssl gencert -ca=ca.pem -ca-key=ca-key.pem -config=ca-config.json -profile=kubernetes kube-proxy-csr.json | cfssljson -bare kube-proxy
 
-## 分发证书
+## distribute ca
 mkdir -p /etc/kubernetes/ssl
 cp -rf ./*.pem /etc/kubernetes/ssl/
 for node in "${ALL_SERVER_IPS[@]}"
@@ -153,30 +152,28 @@ do
   scp -r ./*.pem "${USER}@${node}:/etc/kubernetes/ssl/"
 done
 
-## 创建TLS Bootstrapping Token
+## create TLS Bootstrapping Token
 cd .. || return
 tar -C ./bins -zxvf ./bins/kubernetes-server-linux-amd64.tar.gz
 chmod +x ./bins/kubernetes/server/bin/kubectl
 cp -f ./bins/kubernetes/server/bin/kubectl /usr/local/bin/kubectl
 
-### 创建kubectl kubeconfig文件
+### create kubectl kubeconfig
 export KUBE_APISERVER="https://${MASTER_IP}:6443"
-# 设置集群参数
+
+## set cluster params
 cd /etc/kubernetes || return
 kubectl config set-cluster kubernetes \
   --certificate-authority=/etc/kubernetes/ssl/ca.pem \
   --embed-certs=true \
   --server="${KUBE_APISERVER}"
-# 设置客户端认证参数
 kubectl config set-credentials admin \
   --client-certificate=/etc/kubernetes/ssl/admin.pem \
   --embed-certs=true \
   --client-key=/etc/kubernetes/ssl/admin-key.pem
-# 设置上下文参数
 kubectl config set-context kubernetes \
   --cluster=kubernetes \
   --user=admin
-# 设置默认上下文
 kubectl config use-context kubernetes
 
 BOOTSTRAP_TOKEN=$(head -c 16 /dev/urandom | od -An -t x | tr -d ' ')
@@ -187,61 +184,51 @@ EOF
 
 export KUBE_APISERVER="https://${MASTER_IP}:6443"
 
-### 创建kubelet bootstrapping kubeconfig
-# 设置集群参数
+## create kubelet bootstrapping kubeconfig
 cd /etc/kubernetes || return
 kubectl config set-cluster kubernetes \
   --certificate-authority=/etc/kubernetes/ssl/ca.pem \
   --embed-certs=true \
   --server="${KUBE_APISERVER}" \
   --kubeconfig=bootstrap.kubeconfig
-# 设置客户端认证参数
 kubectl config set-credentials kubelet-bootstrap \
   --token="${BOOTSTRAP_TOKEN}" \
   --kubeconfig=bootstrap.kubeconfig
-# 设置上下文参数
 kubectl config set-context default \
   --cluster=kubernetes \
   --user=kubelet-bootstrap \
   --kubeconfig=bootstrap.kubeconfig
-# 设置默认上下文
 kubectl config use-context default --kubeconfig=bootstrap.kubeconfig
 
 export KUBE_APISERVER="https://${MASTER_IP}:6443"
 
-### 创建kube-proxy kubeconfig文件
-# 设置集群参数
+### create kube-proxy kubeconfig
 cd /etc/kubernetes || return
 kubectl config set-cluster kubernetes \
   --certificate-authority=/etc/kubernetes/ssl/ca.pem \
   --embed-certs=true \
   --server="${KUBE_APISERVER}" \
   --kubeconfig=kube-proxy.kubeconfig
-# 设置客户端认证参数
 kubectl config set-credentials kubelet-proxy \
   --client-certificate=/etc/kubernetes/ssl/kube-proxy.pem \
   --client-key=/etc/kubernetes/ssl/kube-proxy-key.pem \
   --embed-certs=true \
   --kubeconfig=kube-proxy.kubeconfig
-# 设置上下文参数
 kubectl config set-context default \
   --cluster=kubernetes \
   --user=kube-proxy \
   --kubeconfig=kube-proxy.kubeconfig
-# 设置默认上下文
 kubectl config use-context default --kubeconfig=kube-proxy.kubeconfig
 
-### 分发文件
+### distribute files
 for node in "${ALL_SERVER_IPS[@]}"
 do
   scp token.csv bootstrap.kubeconfig kube-proxy.kubeconfig "${USER}@${node}:/etc/kubernetes/"
 done
 
-#-------------------------------------------------------------#
-#                                                             #
-#                           安装 ETCD                          #
-#                                                             #
-#-------------------------------------------------------------#
+#-----------------------------------------------------------#
+#                install etcd cluster                       #
+#-----------------------------------------------------------#
 
 cd "${BASE_PATH}" || return
 
@@ -293,8 +280,8 @@ do
   ssh "${USER}@${node}" "systemctl daemon-reload && systemctl enable etcd && systemctl start etcd || true"
 done
 
-
-sleep 10  # 保证etcd集群已经启动
+# ensure etcd cluster started
+sleep 10
 
 etcdctl \
   --ca-file=/etc/kubernetes/ssl/ca.pem \
@@ -308,7 +295,7 @@ printf "etcd cluster started! \n \n"
 
 #-------------------------------------------------------------#
 #                                                             #
-#                           安装 FLANNEL                       #
+#                       install FLANNEL                       #
 #                                                             #
 #-------------------------------------------------------------#
 
@@ -324,7 +311,7 @@ FLANNEL_ETCD_PREFIX="/kube-centos/network"
 FLANNEL_OPTIONS="-etcd-cafile=/etc/kubernetes/ssl/ca.pem -etcd-certfile=/etc/kubernetes/ssl/kubernetes.pem -etcd-keyfile=/etc/kubernetes/ssl/kubernetes-key.pem --iface-regex=eth*|enp*"
 EOF
 
-# 在etcd中注册docker到子网络
+# register flannel subnet to etcd
 etcdctl --endpoints="${ETCD_ENDPOINTS}" \
   --ca-file=/etc/kubernetes/ssl/ca.pem \
   --cert-file=/etc/kubernetes/ssl/kubernetes.pem \
@@ -348,9 +335,10 @@ do
   ssh "${USER}@${node}" "systemctl daemon-reload && systemctl enable flanneld && systemctl start flanneld"
 done
 
-sleep 10 # 确保flanneld集群已经启动完成
+# ensure flanneld cluster started
+sleep 10
 
-# 检查docker子网络状态
+# output flanneld subnet
 etcdctl --endpoints="${ETCD_ENDPOINTS}" \
   --ca-file=/etc/kubernetes/ssl/ca.pem \
   --cert-file=/etc/kubernetes/ssl/kubernetes.pem \
@@ -361,7 +349,7 @@ etcdctl --endpoints="${ETCD_ENDPOINTS}" \
 
 #-------------------------------------------------------------#
 #                                                             #
-#                           安装 DOCKER                        #
+#                       install DOCKER                        #
 #                                                             #
 #-------------------------------------------------------------#
 
@@ -385,7 +373,7 @@ done
 
 #-------------------------------------------------------------#
 #                                                             #
-#                        安装 K8S 各个组件                      #
+#                  install K8S components                     #
 #                                                             #
 #-------------------------------------------------------------#
 
@@ -400,8 +388,8 @@ KUBE_MASTER="--master=http://${MASTER_IP}:8080"
 EOF
 cp -f ./systemd/kube-config.conf /etc/kubernetes/
 
-## 主节点安装k8s组件
-### 安装kube-apiserver
+## install k8s components in the master
+### kube-apiserver
 cp -f ./systemd/kube-apiserver.service /usr/lib/systemd/system/
 cat > ./systemd/kube-apiserver.conf <<EOF
 KUBE_API_ADDRESS="--advertise-address=${MASTER_IP} --bind-address=${MASTER_IP} --insecure-bind-address=${MASTER_IP}"
@@ -413,12 +401,12 @@ EOF
 cp -f ./systemd/kube-apiserver.conf /etc/kubernetes/
 systemctl daemon-reload && systemctl enable kube-apiserver && systemctl start kube-apiserver && systemctl status kube-apiserver
 
-### 安装kube-controller-manager
+### kube-controller-manager
 cp -f ./systemd/kube-controller-manager.service /usr/lib/systemd/system/
 cp -f ./systemd/kube-controller-manager.conf /etc/kubernetes/
 systemctl daemon-reload && systemctl enable kube-controller-manager && systemctl start kube-controller-manager && systemctl status kube-controller-manager
 
-## 安装kube-scheduler
+### kube-scheduler
 cp -f ./systemd/kube-scheduler.service /usr/lib/systemd/system/
 cp -f ./systemd/kube-scheduler.conf /etc/kubernetes/
 systemctl daemon-reload && systemctl enable kube-scheduler && systemctl start kube-scheduler && systemctl status kube-scheduler
@@ -426,8 +414,8 @@ systemctl daemon-reload && systemctl enable kube-scheduler && systemctl start ku
 ## confirm master is healthy
 kubectl get componentstatuses
 
-### 将 bootstrap token 文件中的 kubelet-bootstrap 用户赋予 system:node-bootstrapper cluster 角色(role)
-### kubelet 才能有权限创建认证请求(certificate signing requests)
+### give kubelet-bootstrap user system:node-bootstrapper cluster role
+### so kubelet can create certificate signing requests
 cd /etc/kubernetes || return 
 kubectl delete clusterrolebinding kubelet-bootstrap || true
 kubectl create clusterrolebinding kubelet-bootstrap \
@@ -435,15 +423,14 @@ kubectl create clusterrolebinding kubelet-bootstrap \
   --user=kubelet-bootstrap
 
 
-## 子节点安装k8s各个组件
-###### 部署kubelet和kube-proxy ######
+## install k8s components in every node
+###### kubelet and kube-proxy ######
 cd "${BASE_PATH}" || return
 for node in "${NODE_IPS[@]}"
 do
 
-### 将master节点上的~/.kube/config文件（该文件在安装kubectl命令行工具这一步中将会自动生成）
-### 拷贝到node节点的/etc/kubernetes/kubelet.kubeconfig位置，这样就不需要通过CSR，
-### 当kubelet启动后就会自动加入的集群中
+### copy ~/.kube/config in the master to /etc/kubernetes/kubelet.kubeconfig
+### in the node, so node can join in the cluster without master approvment
 scp ~/.kube/config "${USER}@${node}:/etc/kubernetes/kubelet.kubeconfig"
 
 scp ./bins/kubernetes/server/bin/kubelet "${USER}@${node}:/usr/local/bin/"
