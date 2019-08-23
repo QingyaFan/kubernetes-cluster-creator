@@ -2,13 +2,36 @@
 
 set -exo pipefail
 
+function stopFirewall () {
+  ssh "$1@$2" "systemctl stop firewalld && systemctl disable firewalld && setenforce 0 | true && sed -i 's/SELINUX=enforcing/SELINUX=disabled/' /etc/selinux/config"
+}
+
+function generateCerts () {
+  ## generate all certificate, then distribute to all nodes
+  ### generate CA
+  cd ./ssl && rm -rf ./* || return
+  cfssl print-defaults config > config.json
+  cfssl print-defaults csr > csr.json
+  cfssl gencert -initca ssl/ca-csr.json | cfssljson -bare ca
+
+  for node in "${ALL_SERVER_IPS[@]}"
+  do
+  sed "/\"127\.0\.0\.1\"\,/a \"${node}\"\," ssl/kubernetes-csr.json > ./kubernetes-csr.json
+  done
+  cfssl gencert -ca=ca.pem -ca-key=ca-key.pem -config=ssl/ca-config.json -profile=kubernetes kubernetes-csr.json | cfssljson -bare kubernetes
+
+  cfssl gencert -ca=ca.pem -ca-key=ca-key.pem -config=ssl/ca-config.json -profile=kubernetes ssl/admin-csr.json | cfssljson -bare admin
+
+  cfssl gencert -ca=ca.pem -ca-key=ca-key.pem -config=ssl/ca-config.json -profile=kubernetes ssl/kube-proxy-csr.json | cfssljson -bare kube-proxy
+}
+
+
 # config master can access node without auth
 ssh-keygen
 for node in "${ALL_SERVER_IPS[@]}"
 do
 ssh-copy-id -i ~/.ssh/id_rsa.pub "${node}"
-ssh "${USER}@${node}" "systemctl stop firewalld && systemctl disable firewalld"
-ssh "${USER}@${node}" "setenforce 0 | true && sed -i 's/SELINUX=enforcing/SELINUX=disabled/' /etc/selinux/config"
+stopFirewall "${USER}" "$node"
 done
 
 # shutdown swap in all node
@@ -45,134 +68,7 @@ cp -rf ./bins/cfssl_linux-amd64 /usr/local/bin/cfssl
 cp -rf ./bins/cfssl-certinfo_linux-amd64 /usr/local/bin/cfssl-certinfo
 cp -rf ./bins/cfssljson_linux-amd64 /usr/local/bin/cfssljson
 
-## generate all certificate, then distribute to all nodes
-### generate CA
-cd ./ssl && rm -rf ./* || return
-cfssl print-defaults config > config.json
-cfssl print-defaults csr > csr.json
-cat > ca-config.json <<EOF
-{
-  "signing": {
-    "default": {
-      "expiry": "87600h"
-    },
-    "profiles": {
-      "kubernetes": {
-        "usages": [
-            "signing",
-            "key encipherment",
-            "server auth",
-            "client auth"
-        ],
-        "expiry": "87600h"
-      }
-    }
-  }
-}
-EOF
-cat > ca-csr.json <<EOF
-{
-  "CN": "kubernetes",
-  "key": {
-    "algo": "rsa",
-    "size": 2048
-  },
-  "names": [
-    {
-      "C": "CN",
-      "ST": "BeiJing",
-      "L": "BeiJing",
-      "O": "k8s",
-      "OU": "System"
-    }
-  ],
-    "ca": {
-       "expiry": "87600h"
-    }
-}
-EOF
-cfssl gencert -initca ca-csr.json | cfssljson -bare ca
-
-
-### create Kubernetes certificate
-cat > kubernetes-csr.json <<EOF
-{
-    "CN": "kubernetes",
-    "hosts": [
-      "127.0.0.1",
-      "10.254.0.1",
-      "kubernetes",
-      "kubernetes.default",
-      "kubernetes.default.svc",
-      "kubernetes.default.svc.cluster",
-      "kubernetes.default.svc.cluster.local"
-    ],
-    "key": {
-        "algo": "rsa",
-        "size": 2048
-    },
-    "names": [
-        {
-            "C": "CN",
-            "ST": "BeiJing",
-            "L": "BeiJing",
-            "O": "k8s",
-            "OU": "System"
-        }
-    ]
-}
-EOF
-
-## add all server ips to kubernetes-csr.json
-for node in "${ALL_SERVER_IPS[@]}"
-do
-sed -i "/\"127\.0\.0\.1\"\,/a \"${node}\"\," kubernetes-csr.json
-done
-cfssl gencert -ca=ca.pem -ca-key=ca-key.pem -config=ca-config.json -profile=kubernetes kubernetes-csr.json | cfssljson -bare kubernetes
-
-### create admin certificate
-cat > admin-csr.json <<EOF
-{
-  "CN": "admin",
-  "hosts": [],
-  "key": {
-    "algo": "rsa",
-    "size": 2048
-  },
-  "names": [
-    {
-      "C": "CN",
-      "ST": "BeiJing",
-      "L": "BeiJing",
-      "O": "system:masters",
-      "OU": "System"
-    }
-  ]
-}
-EOF
-cfssl gencert -ca=ca.pem -ca-key=ca-key.pem -config=ca-config.json -profile=kubernetes admin-csr.json | cfssljson -bare admin
-
-### create kube-proxy certificate
-cat > kube-proxy-csr.json <<EOF
-{
-  "CN": "system:kube-proxy",
-  "hosts": [],
-  "key": {
-    "algo": "rsa",
-    "size": 2048
-  },
-  "names": [
-    {
-      "C": "CN",
-      "ST": "BeiJing",
-      "L": "BeiJing",
-      "O": "k8s",
-      "OU": "System"
-    }
-  ]
-}
-EOF
-cfssl gencert -ca=ca.pem -ca-key=ca-key.pem -config=ca-config.json -profile=kubernetes kube-proxy-csr.json | cfssljson -bare kube-proxy
+generateCerts
 
 ## distribute ca
 mkdir -p /etc/kubernetes/ssl
