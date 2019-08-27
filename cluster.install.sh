@@ -2,10 +2,16 @@
 
 set -exo pipefail
 
+# create a temp directory, put temp file in this, 
+# so we can clear it after the installation is over
+mkdir tmp
+
+# stopFirewall shutdown the firewall
 function stopFirewall () {
   ssh "$1@$2" "systemctl stop firewalld && systemctl disable firewalld && setenforce 0 | true && sed -i 's/SELINUX=enforcing/SELINUX=disabled/' /etc/selinux/config"
 }
 
+# generateCerts generate the certs
 function generateCerts () {
   ## generate all certificate, then distribute to all nodes
   ### generate CA
@@ -23,6 +29,31 @@ function generateCerts () {
   cfssl gencert -ca=ca.pem -ca-key=ca-key.pem -config=ssl/ca-config.json -profile=kubernetes ssl/admin-csr.json | cfssljson -bare admin
 
   cfssl gencert -ca=ca.pem -ca-key=ca-key.pem -config=ssl/ca-config.json -profile=kubernetes ssl/kube-proxy-csr.json | cfssljson -bare kube-proxy
+}
+
+# makeClusterTimeSync make the cluster time sync
+function makeClusterTimeSync () {
+  yum install -y ./bins/ntpserver/* || true
+  sed -i '/centos.pool.ntp.org/d' /etc/ntp.conf
+  sed -i '/Please consider joining the pool/a server 127.127.1.0 iburst' /etc/ntp.conf
+  systemctl restart ntpd
+  for node in "${ETCD_IPS[@]}"
+  do
+    scp -r ./bins/ntpserver "${USER}@${node}:~/"
+    ssh "${USER}@${node}" "yum install -y ~/ntpserver/* || true"
+    ssh "${USER}@${node}" "ntpdate ${MASTER_IP} || true"
+  done
+}
+
+# installETCD install a etcd instance on an node
+function installETCD() {
+  local nodeIP=$1
+  scp ./tmp/etcd-v3.3.13-linux-amd64/etcd* "${USER}@${nodeIP}:/usr/local/bin"
+  ssh "${USER}@${nodeIP}" "mkdir -p /etc/etcd && mkdir -p /var/lib/etcd"
+  order=$((i))
+  scp ./tmp/etcd-node"${order}".conf "${USER}@${nodeIP}:/etc/etcd/etcd.conf"
+  scp ./systemd/etcd.service "${USER}@${nodeIP}:${SERVICE_UNIT_LOCATION}/etcd.service"
+  ssh "${USER}@${nodeIP}" "systemctl daemon-reload && systemctl enable etcd && systemctl start etcd || true"
 }
 
 
@@ -163,48 +194,28 @@ export ETCD_IPS=("${ALL_SERVER_IPS[@]:0:3}")
 export ETCD_ENDPOINTS="https://${ALL_SERVER_IPS[0]}:2379,https://${ALL_SERVER_IPS[1]}:2379,https://${ALL_SERVER_IPS[2]}:2379"
 export ETCD_NODES="etcd-node0=https://${ALL_SERVER_IPS[0]}:2380,etcd-node1=https://${ALL_SERVER_IPS[1]}:2380,etcd-node2=https://${ALL_SERVER_IPS[2]}:2380"
 
-tar -C ./bins -zxvf ./bins/etcd-v3.3.13-linux-amd64.tar.gz
-chmod +x ./bins/etcd-v3.3.13-linux-amd64/etcd*
-chmod 644 ./systemd/etcd.service
+# etcd cluster need cluster time sync
+# so we make an ntp server on the master node 
+# and node sync time according to master
+makeClusterTimeSync
 
-## 集群服务器若时间不同步，会导致etcd启动不正常，因此需要同步时间
-## 安装环境可能离线，在线的时间服务器不可用，因此时间以 master 节点为准
-yum install -y ./bins/ntpserver/* || true
-sed -i '/centos.pool.ntp.org/d' /etc/ntp.conf
-sed -i '/Please consider joining the pool/a server 127.127.1.0 iburst' /etc/ntp.conf
-systemctl restart ntpd
-for node in "${ETCD_IPS[@]}"
-do
-  scp -r ./bins/ntpserver "${USER}@${node}:~/"
-  ssh "${USER}@${node}" "yum install -y ~/ntpserver/* || true"
-  ssh "${USER}@${node}" "ntpdate ${MASTER_IP} || true"
-done
-
-## 根据机器总数，依次生成etcd的配置文件
-## 并将配置文件发送到相应服务器，安装etcd
+# generate etcd env file
 for i in "${!ETCD_IPS[@]}"
 do
-scp ./bins/etcd-v3.3.13-linux-amd64/etcd* "${USER}@${ETCD_IPS[$i]}:/usr/local/bin"
-ssh "${USER}@${ETCD_IPS[$i]}" "mkdir -p /etc/etcd && mkdir -p /var/lib/etcd"
 order=$((i))
-echo "etcd-node${order}"
-
-cat > ./systemd/etcd-node"${order}".conf  << EOF
+cat > ./tmp/etcd-node"${order}".conf  << EOF
 ETCD_NAME=etcd-node${order}
 NODE_IP=${ETCD_IPS[$i]}
 ETCD_NODES="${ETCD_NODES}"
 EOF
-
-scp ./systemd/etcd-node"${order}".conf "${USER}@${ETCD_IPS[$i]}:/etc/etcd/etcd.conf"
-scp ./systemd/etcd.service "${USER}@${ETCD_IPS[$i]}:${SERVICE_UNIT_LOCATION}/etcd.service"
 done
 
-sleep 5
-
-printf "starting etcd cluster ··· \n\n"
-for node in "${ETCD_IPS[@]}"
+tar -C ./tmp -zxvf ./bins/etcd-v3.3.13-linux-amd64.tar.gz
+chmod +x ./tmp/etcd-v3.3.13-linux-amd64/etcd*
+chmod 644 ./systemd/etcd.service
+for i in "${!ETCD_IPS[@]}"
 do
-  ssh "${USER}@${node}" "systemctl daemon-reload && systemctl enable etcd && systemctl start etcd || true"
+installETCD "${ETCD_IPS[$i]}"
 done
 
 # ensure etcd cluster started
