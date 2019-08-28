@@ -7,12 +7,12 @@ set -exo pipefail
 mkdir tmp
 
 # stopFirewall shutdown the firewall
-function stopFirewall () {
+function stopFirewall {
   ssh "$1@$2" "systemctl stop firewalld && systemctl disable firewalld && setenforce 0 | true && sed -i 's/SELINUX=enforcing/SELINUX=disabled/' /etc/selinux/config"
 }
 
 # generateCerts generate the certs
-function generateCerts () {
+function generateCerts {
   ## generate all certificate, then distribute to all nodes
   ### generate CA
   cd ./ssl && rm -rf ./* || return
@@ -32,7 +32,7 @@ function generateCerts () {
 }
 
 # makeClusterTimeSync make the cluster time sync
-function makeClusterTimeSync () {
+function makeClusterTimeSync {
   yum install -y ./bins/ntpserver/* || true
   sed -i '/centos.pool.ntp.org/d' /etc/ntp.conf
   sed -i '/Please consider joining the pool/a server 127.127.1.0 iburst' /etc/ntp.conf
@@ -46,7 +46,7 @@ function makeClusterTimeSync () {
 }
 
 # installETCD install a etcd instance on an node
-function installETCD() {
+function installETCD {
   local nodeIP=$1
   scp ./tmp/etcd-v3.3.13-linux-amd64/etcd* "${USER}@${nodeIP}:/usr/local/bin"
   ssh "${USER}@${nodeIP}" "mkdir -p /etc/etcd && mkdir -p /var/lib/etcd"
@@ -54,6 +54,24 @@ function installETCD() {
   scp ./tmp/etcd-node"${order}".conf "${USER}@${nodeIP}:/etc/etcd/etcd.conf"
   scp ./systemd/etcd.service "${USER}@${nodeIP}:${SERVICE_UNIT_LOCATION}/etcd.service"
   ssh "${USER}@${nodeIP}" "systemctl daemon-reload && systemctl enable etcd && systemctl start etcd || true"
+}
+
+function installFlannel {
+  local nodeIP=$1
+  scp tmp/flanneld "${USER}@${nodeIP}:/usr/local/bin"
+  scp tmp/mk-docker-opts.sh "${USER}@${nodeIP}:/usr/local/bin"
+  scp ./systemd/flanneld.service "${USER}@${nodeIP}:${SERVICE_UNIT_LOCATION}"
+  scp ./tmp/flanneld.conf "${USER}@${nodeIP}:/etc/sysconfig/flanneld.conf"
+  ssh "${USER}@${nodeIP}" "systemctl daemon-reload && systemctl enable flanneld && systemctl start flanneld"
+}
+
+function installDocker {
+  local nodeIP=$1
+  ssh "${USER}@${nodeIP}" "mkdir -p /etc/docker/"
+  scp ./tmp/daemon.json "${USER}@${nodeIP}:/etc/docker/"
+  scp ./tmp/docker/* "${USER}@${nodeIP}:/usr/local/bin/"
+  scp ./systemd/docker.service "${USER}@${nodeIP}:${SERVICE_UNIT_LOCATION}/"
+  ssh "${USER}@${nodeIP}" "systemctl daemon-reload && systemctl enable docker.service && systemctl start docker.service"
 }
 
 
@@ -184,12 +202,8 @@ do
   scp token.csv bootstrap.kubeconfig kube-proxy.kubeconfig "${USER}@${node}:/etc/kubernetes/"
 done
 
-#-----------------------------------------------------------#
-#                install etcd cluster                       #
-#-----------------------------------------------------------#
-
+# install etcd cluster
 cd "${BASE_PATH}" || return
-
 export ETCD_IPS=("${ALL_SERVER_IPS[@]:0:3}")
 export ETCD_ENDPOINTS="https://${ALL_SERVER_IPS[0]}:2379,https://${ALL_SERVER_IPS[1]}:2379,https://${ALL_SERVER_IPS[2]}:2379"
 export ETCD_NODES="etcd-node0=https://${ALL_SERVER_IPS[0]}:2380,etcd-node1=https://${ALL_SERVER_IPS[1]}:2380,etcd-node2=https://${ALL_SERVER_IPS[2]}:2380"
@@ -218,9 +232,7 @@ do
 installETCD "${ETCD_IPS[$i]}"
 done
 
-# ensure etcd cluster started
 sleep 10
-
 etcdctl \
   --ca-file=/etc/kubernetes/ssl/ca.pem \
   --cert-file=/etc/kubernetes/ssl/kubernetes.pem \
@@ -229,21 +241,11 @@ etcdctl \
 
 printf "etcd cluster started! \n \n"
 
-
-
-#-------------------------------------------------------------#
-#                                                             #
-#                       install FLANNEL                       #
-#                                                             #
-#-------------------------------------------------------------#
-
-printf "\n starting install flannel ... \n \n "
-cd "${BASE_PATH}" || return
-
-tar -zxvf ./bins/flannel-v0.11.0-linux-amd64.tar.gz
-chmod +x flanneld
-chmod +x mk-docker-opts.sh
-cat > flanneld.conf <<EOF
+# install FLANNEL
+tar -C tmp -zxvf ./bins/flannel-v0.11.0-linux-amd64.tar.gz
+chmod u+x tmp/flanneld
+chmod u+x tmp/mk-docker-opts.sh
+cat > ./tmp/flanneld.conf <<EOF
 FLANNEL_ETCD_ENDPOINTS="${ETCD_ENDPOINTS}"
 FLANNEL_ETCD_PREFIX="/kube-centos/network"
 FLANNEL_OPTIONS="-etcd-cafile=/etc/kubernetes/ssl/ca.pem -etcd-certfile=/etc/kubernetes/ssl/kubernetes.pem -etcd-keyfile=/etc/kubernetes/ssl/kubernetes-key.pem --iface-regex=eth*|enp*"
@@ -261,16 +263,9 @@ etcdctl --endpoints="${ETCD_ENDPOINTS}" \
   --key-file=/etc/kubernetes/ssl/kubernetes-key.pem \
   mk /kube-centos/network/config '{"Network":"172.30.0.0/16","SubnetLen":24,"Backend":{"Type":"vxlan"}}' || true
 
-# start flanneld
-systemctl daemon-reload && systemctl enable flanneld && systemctl start flanneld && systemctl status flanneld &
-
 for node in "${NODE_IPS[@]}"
 do
-  scp flanneld "${USER}@${node}:/usr/local/bin"
-  scp mk-docker-opts.sh "${USER}@${node}:/usr/local/bin"
-  scp ./systemd/flanneld.service "${USER}@${node}:${SERVICE_UNIT_LOCATION}"
-  scp ./flanneld.conf "${USER}@${node}:/etc/sysconfig/flanneld.conf"
-  ssh "${USER}@${node}" "systemctl daemon-reload && systemctl enable flanneld && systemctl start flanneld"
+  installFlannel "$node"
 done
 
 # ensure flanneld cluster started
@@ -283,17 +278,10 @@ etcdctl --endpoints="${ETCD_ENDPOINTS}" \
   --key-file=/etc/kubernetes/ssl/kubernetes-key.pem \
   ls /kube-centos/network/subnets
 
-
-
-#-------------------------------------------------------------#
-#                                                             #
-#                       install DOCKER                        #
-#                                                             #
-#-------------------------------------------------------------#
-
+# install DOCKER
 cd "${BASE_PATH}" || return
-tar zxvf ./bins/docker-18.09.6.tgz
-cat > ./daemon.json << EOF
+tar -C ./tmp -zxvf ./bins/docker-18.09.6.tgz
+cat > ./tmp/daemon.json << EOF
 {
   "graph": "${DOCKER_LOCATION}"
 }
@@ -301,42 +289,21 @@ EOF
 
 for node in "${ALL_SERVER_IPS[@]}"
 do
-  ssh "${USER}@${node}" "mkdir -p /etc/docker/"
-  scp ./daemon.json "${USER}@${node}:/etc/docker/"
-  scp docker/* "${USER}@${node}:/usr/local/bin/"
-  scp ./systemd/docker.service "${USER}@${node}:${SERVICE_UNIT_LOCATION}/"
-  ssh "${USER}@${node}" "systemctl daemon-reload && systemctl enable docker.service &&systemctl start docker.service"
+  installDocker "$node"
 done
 
 
-#-------------------------------------------------------------#
-#                                                             #
-#                  install K8S components                     #
-#                                                             #
-#-------------------------------------------------------------#
-
+# install K8S components
 cd "${BASE_PATH}" || return
+sed "s@MASTER_IP@${MASTER_IP}@" ./systemd/kube-config.conf > ./tmp/kube-config.conf
 cp -rf ./bins/kubernetes/server/bin/* /usr/local/bin/
-
-cat > ./systemd/kube-config.conf <<EOF
-KUBE_LOGTOSTDERR="--logtostderr=true"
-KUBE_LOG_LEVEL="--v=0"
-KUBE_ALLOW_PRIV="--allow-privileged=true"
-KUBE_MASTER="--master=http://${MASTER_IP}:8080"
-EOF
-cp -f ./systemd/kube-config.conf /etc/kubernetes/
+cp -f ./tmp/kube-config.conf /etc/kubernetes/
 
 ## install k8s components in the master
 ### kube-apiserver
+sed "s@MASTER_IP@${MASTER_IP}@g ; s@ETCD_ENDPOINTS@${ETCD_ENDPOINTS}@" ./systemd/kube-apiserver.conf > ./tmp/kube-apiserver.conf
 cp -f ./systemd/kube-apiserver.service /usr/lib/systemd/system/
-cat > ./systemd/kube-apiserver.conf <<EOF
-KUBE_API_ADDRESS="--advertise-address=${MASTER_IP} --bind-address=${MASTER_IP} --insecure-bind-address=${MASTER_IP}"
-KUBE_ETCD_SERVERS="--etcd-servers=${ETCD_ENDPOINTS}"
-KUBE_SERVICE_ADDRESSES="--service-cluster-ip-range=10.254.0.0/16"
-KUBE_ADMISSION_CONTROL="--admission-control=ServiceAccount,NamespaceLifecycle,LimitRanger,ResourceQuota"
-KUBE_API_ARGS="--authorization-mode=RBAC --runtime-config=rbac.authorization.k8s.io/v1beta1 --kubelet-https=true --enable-bootstrap-token-auth --token-auth-file=/etc/kubernetes/token.csv --service-node-port-range=30000-32767 --tls-cert-file=/etc/kubernetes/ssl/kubernetes.pem --tls-private-key-file=/etc/kubernetes/ssl/kubernetes-key.pem --client-ca-file=/etc/kubernetes/ssl/ca.pem --service-account-key-file=/etc/kubernetes/ssl/ca-key.pem --etcd-cafile=/etc/kubernetes/ssl/ca.pem --etcd-certfile=/etc/kubernetes/ssl/kubernetes.pem --etcd-keyfile=/etc/kubernetes/ssl/kubernetes-key.pem --enable-swagger-ui=true --apiserver-count=3 --audit-log-maxage=30 --audit-log-maxbackup=3 --audit-log-maxsize=100 --audit-log-path=/var/lib/audit.log --event-ttl=1h"
-EOF
-cp -f ./systemd/kube-apiserver.conf /etc/kubernetes/
+cp -f ./tmp/kube-apiserver.conf /etc/kubernetes/
 systemctl daemon-reload && systemctl enable kube-apiserver && systemctl start kube-apiserver && systemctl status kube-apiserver
 
 ### kube-controller-manager
@@ -370,28 +337,19 @@ do
 ### copy ~/.kube/config in the master to /etc/kubernetes/kubelet.kubeconfig
 ### in the node, so node can join in the cluster without master approvment
 scp ~/.kube/config "${USER}@${node}:/etc/kubernetes/kubelet.kubeconfig"
-
 scp ./bins/kubernetes/server/bin/kubelet "${USER}@${node}:/usr/local/bin/"
 scp ./bins/kubernetes/server/bin/kube-proxy "${USER}@${node}:/usr/local/bin/"
 
 #### install kubelet
-cat > ./systemd/kubelet.conf  << EOF
-KUBELET_ADDRESS="--address=${node}"
-KUBELET_HOSTNAME="--hostname-override=${node}"
-KUBELET_POD_INFRA_CONTAINER="--pod-infra-container-image=registry.cn-beijing.aliyuncs.com/geohey/pause:latest"
-KUBELET_ARGS="--cluster-dns=10.254.0.2 --bootstrap-kubeconfig=/etc/kubernetes/bootstrap.kubeconfig --kubeconfig=/etc/kubernetes/kubelet.kubeconfig --cert-dir=/etc/kubernetes/ssl --cluster-domain=cluster.local --hairpin-mode promiscuous-bridge --serialize-image-pulls=false"
-EOF
-scp ./systemd/kube-config.conf "${USER}@${node}:/etc/kubernetes/"
-scp ./systemd/kubelet.conf "${USER}@${node}:/etc/kubernetes/"
-scp systemd/kubelet.service "${USER}@${node}:/usr/lib/systemd/system/"
-ssh "${USER}@${node}" "mkdir -p /var/lib/kubelet"
-ssh "${USER}@${node}" "systemctl daemon-reload && systemctl enable kubelet && systemctl start kubelet"
+sed "s@NODE_IP@${node}@g" ./systemd/kubelet.conf > ./tmp/kubelet.conf
+scp ./tmp/kube-config.conf "${USER}@${node}:/etc/kubernetes/"
+scp ./tmp/kubelet.conf "${USER}@${node}:/etc/kubernetes/"
+scp ./systemd/kubelet.service "${USER}@${node}:/usr/lib/systemd/system/"
+ssh "${USER}@${node}" "mkdir -p /var/lib/kubelet && systemctl daemon-reload && systemctl enable kubelet && systemctl start kubelet"
 
 #### install kube-proxy
-cat > ./kube-proxy.conf  << EOF
-KUBE_PROXY_ARGS="--bind-address=${node} --hostname-override=${node} --kubeconfig=/etc/kubernetes/kube-proxy.kubeconfig --cluster-cidr=10.254.0.0/16"
-EOF
-scp ./kube-proxy.conf "${USER}@${node}:/etc/kubernetes/"
-scp systemd/kube-proxy.service "${USER}@${node}:/usr/lib/systemd/system/"
+sed "s@NODE_IP@${node}@g" ./systemd/kube-proxy.conf > ./tmp/kube-proxy.conf
+scp ./tmp/kube-proxy.conf "${USER}@${node}:/etc/kubernetes/"
+scp ./systemd/kube-proxy.service "${USER}@${node}:/usr/lib/systemd/system/"
 ssh "${USER}@${node}" "systemctl daemon-reload && systemctl enable kube-proxy && systemctl start kube-proxy"
 done
