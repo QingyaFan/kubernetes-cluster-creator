@@ -9,5 +9,5 @@ The script mainly foucus on the offline installation of the kubernetes cluster. 
 
 ## Usage
 
-1. config role in the `cluster.conf.sh`;
-2. run install.sh，`bash ./install.sh`。
+1. config every server ip in the `cluster.conf.sh`
+2. run `bash ./cluster.install.sh`

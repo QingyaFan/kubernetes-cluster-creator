@@ -2,6 +2,12 @@
 
 set -exo pipefail
 
+BASE_PATH="$(pwd)"
+USER=root
+
+# shellcheck disable=SC1091
+. ./cluster.conf.sh
+
 # create a temp directory, put temp file in this, 
 # so we can clear it after the installation is over
 rm -rf tmp && mkdir tmp
@@ -52,6 +58,8 @@ function installETCD {
   ssh "${USER}@${nodeIP}" "systemctl daemon-reload && systemctl enable etcd && systemctl start etcd || true"
 }
 
+# installFlannel install a flannel instance on an node
+# to ensure container ip does not conflict
 function installFlannel {
   local nodeIP=$1
   scp tmp/flanneld "${USER}@${nodeIP}:/usr/local/bin"
@@ -61,6 +69,7 @@ function installFlannel {
   ssh "${USER}@${nodeIP}" "systemctl daemon-reload && systemctl enable flanneld && systemctl start flanneld"
 }
 
+# installDocker install docker instance on a specified machine
 function installDocker {
   local nodeIP=$1
   ssh "${USER}@${nodeIP}" "mkdir -p /etc/docker/"
