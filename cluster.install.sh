@@ -54,7 +54,7 @@ function installETCD {
   ssh "${USER}@${nodeIP}" "mkdir -p /etc/etcd && mkdir -p /var/lib/etcd"
   order=$((i))
   scp ./tmp/etcd-node"${order}".conf "${USER}@${nodeIP}:/etc/etcd/etcd.conf"
-  scp ./systemd/etcd.service "${USER}@${nodeIP}:${SERVICE_UNIT_LOCATION}/etcd.service"
+  scp ./systemd/etcd.service "${USER}@${nodeIP}:${SERVICE_UNIT_LOCATION}/"
   ssh "${USER}@${nodeIP}" "systemctl daemon-reload && systemctl enable etcd && systemctl start etcd || true"
 }
 
@@ -87,17 +87,17 @@ function installKubernetesMaster {
 
   ## kube-apiserver
   sed "s@MASTER_IP@${MASTER_IP}@g ; s@ETCD_ENDPOINTS@${ETCD_ENDPOINTS}@" ./systemd/kube-apiserver.conf > ./tmp/kube-apiserver.conf
-  cp -f ./systemd/kube-apiserver.service /usr/lib/systemd/system/
+  cp -f ./systemd/kube-apiserver.service "${SERVICE_UNIT_LOCATION}/"
   cp -f ./tmp/kube-apiserver.conf /etc/kubernetes/
   systemctl daemon-reload && systemctl enable kube-apiserver && systemctl start kube-apiserver && systemctl status kube-apiserver
 
   ## kube-controller-manager
-  cp -f ./systemd/kube-controller-manager.service /usr/lib/systemd/system/
+  cp -f ./systemd/kube-controller-manager.service "${SERVICE_UNIT_LOCATION}/"
   cp -f ./systemd/kube-controller-manager.conf /etc/kubernetes/
   systemctl daemon-reload && systemctl enable kube-controller-manager && systemctl start kube-controller-manager && systemctl status kube-controller-manager
 
   ## kube-scheduler
-  cp -f ./systemd/kube-scheduler.service /usr/lib/systemd/system/
+  cp -f ./systemd/kube-scheduler.service "${SERVICE_UNIT_LOCATION}/"
   cp -f ./systemd/kube-scheduler.conf /etc/kubernetes/
   systemctl daemon-reload && systemctl enable kube-scheduler && systemctl start kube-scheduler && systemctl status kube-scheduler
 }
@@ -115,11 +115,11 @@ function installKubernetsNode {
   sed "s@NODE_IP@${nodeIP}@g" ./systemd/kubelet.conf > ./tmp/kubelet.conf
   scp ./tmp/kube-config.conf "${USER}@${nodeIP}:/etc/kubernetes/"
   scp ./tmp/kubelet.conf "${USER}@${nodeIP}:/etc/kubernetes/"
-  scp ./systemd/kubelet.service "${USER}@${nodeIP}:/usr/lib/systemd/system/"
+  scp ./systemd/kubelet.service "${USER}@${nodeIP}:${SERVICE_UNIT_LOCATION}/"
   ## install kube-proxy
   sed "s@NODE_IP@${nodeIP}@g" ./systemd/kube-proxy.conf > ./tmp/kube-proxy.conf
   scp ./tmp/kube-proxy.conf "${USER}@${nodeIP}:/etc/kubernetes/"
-  scp ./systemd/kube-proxy.service "${USER}@${nodeIP}:/usr/lib/systemd/system/"
+  scp ./systemd/kube-proxy.service "${USER}@${nodeIP}:${SERVICE_UNIT_LOCATION}/"
 
   ssh "${USER}@${nodeIP}" "mkdir -p /var/lib/kubelet && systemctl daemon-reload && systemctl enable kubelet && systemctl enable kube-proxy && systemctl start kubelet && systemctl start kube-proxy"
 }
