@@ -17,7 +17,11 @@ rm -rf tmp && mkdir tmp
 
 # stopFirewall shutdown the firewall
 function stopFirewall {
-  ssh "$1@$2" "systemctl stop firewalld && systemctl disable firewalld && setenforce 0 | true && sed -i 's/SELINUX=enforcing/SELINUX=disabled/' /etc/selinux/config"
+  if [[ $HOST_SYSTEM == "centos" ]]; then 
+    ssh "$1@$2" "systemctl stop firewalld && systemctl disable firewalld && setenforce 0 | true && sed -i 's/SELINUX=enforcing/SELINUX=disabled/' /etc/selinux/config"
+  elif [[ $HOST_SYSTEM == "ubuntu" ]]; then
+    ssh "$1@$2" "systemctl stop ufw && systemctl disable ufw"
+  fi
 }
 
 # shutdownSWAP shot down swap
@@ -70,12 +74,12 @@ function makeClusterTimeSync {
 function makeClusterTimeSyncUbuntu {
   apt install -y ./bins/ntpserver/ubuntu/* || true
   sed -i '/centos.pool.ntp.org/d' /etc/ntp.conf
-  sed -i '/Please consider joining the pool/a server 127.127.1.0 iburst' /etc/ntp.conf
+  sed -i '/3.ubuntu.pool.ntp.org iburst/a pool 127.127.1.0 iburst' /etc/ntp.conf
   systemctl restart ntpd
   for node in "${ETCD_IPS[@]}"
   do
     scp -r ./bins/ntpserver/ubuntu "${USER}@${node}:~/"
-    ssh "${USER}@${node}" "yum install -y ~/ubuntu/* || true"
+    ssh "${USER}@${node}" "apt install -y ~/ubuntu/* || true"
     ssh "${USER}@${node}" "ntpdate ${MASTER_IP} || true"
   done
 }
@@ -343,10 +347,14 @@ function main {
 
 
 # get system params to init some env
+HOST_SYSTEM="centos"
 while [[ $# -gt 0 ]]; do
   key="$1"
   case $key in
-    -s|--system) HOST_SYSTEM="$2"
+    -s|--system)
+    if [[ "$2" == "ubuntu" ]]; then
+      HOST_SYSTEM="$2"
+    fi
     shift
     shift
     ;;
