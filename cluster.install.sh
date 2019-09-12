@@ -53,14 +53,29 @@ function generateCerts {
 
 # makeClusterTimeSync make the cluster time sync
 function makeClusterTimeSync {
-  yum install -y ./bins/ntpserver/* || true
+  yum install -y ./bins/ntpserver/centos/* || true
   sed -i '/centos.pool.ntp.org/d' /etc/ntp.conf
   sed -i '/Please consider joining the pool/a server 127.127.1.0 iburst' /etc/ntp.conf
   systemctl restart ntpd
   for node in "${ETCD_IPS[@]}"
   do
-    scp -r ./bins/ntpserver "${USER}@${node}:~/"
-    ssh "${USER}@${node}" "yum install -y ~/ntpserver/* || true"
+    scp -r ./bins/ntpserver/centos "${USER}@${node}:~/"
+    ssh "${USER}@${node}" "yum install -y ~/centos/* || true"
+    ssh "${USER}@${node}" "ntpdate ${MASTER_IP} || true"
+  done
+}
+
+# makeClusterTimeSyncUbuntu makethe cluster time sync
+# on ubuntu system
+function makeClusterTimeSyncUbuntu {
+  apt install -y ./bins/ntpserver/ubuntu/* || true
+  sed -i '/centos.pool.ntp.org/d' /etc/ntp.conf
+  sed -i '/Please consider joining the pool/a server 127.127.1.0 iburst' /etc/ntp.conf
+  systemctl restart ntpd
+  for node in "${ETCD_IPS[@]}"
+  do
+    scp -r ./bins/ntpserver/ubuntu "${USER}@${node}:~/"
+    ssh "${USER}@${node}" "yum install -y ~/ubuntu/* || true"
     ssh "${USER}@${node}" "ntpdate ${MASTER_IP} || true"
   done
 }
@@ -237,7 +252,12 @@ function main {
   # etcd cluster need cluster time sync
   # so we make an ntp server on the master node 
   # and node sync time according to master
-  makeClusterTimeSync
+  if [[ $HOST_SYSTEM == "centos" ]]; then
+    makeClusterTimeSync
+  elif [[ $HOST_SYSTEM == "ubuntu" ]]; then 
+    makeClusterTimeSyncUbuntu
+  fi
+  
 
   # generate etcd env file
   for i in "${!ETCD_IPS[@]}"; do
