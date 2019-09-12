@@ -2,7 +2,7 @@
 
 set -exu
 
-export NODE_IPS=("192.168.31.81" "192.168.31.82" "192.168.31.83")
+export NODE_IPS=("10.0.4.20" "10.0.4.21" "10.0.4.22")
 export USER=root
 
 ## 停掉 Master 节点所有 k8s 服务，并清理安装文件

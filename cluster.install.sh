@@ -4,12 +4,13 @@ set -exo pipefail
 
 BASE_PATH="$(pwd)"
 USER=root
-ETCD_IPS=("${ALL_SERVER_IPS[@]:0:3}")
-ETCD_ENDPOINTS="https://${ALL_SERVER_IPS[0]}:2379,https://${ALL_SERVER_IPS[1]}:2379,https://${ALL_SERVER_IPS[2]}:2379"
-ETCD_NODES="etcd-node0=https://${ALL_SERVER_IPS[0]}:2380,etcd-node1=https://${ALL_SERVER_IPS[1]}:2380,etcd-node2=https://${ALL_SERVER_IPS[2]}:2380"
 
 # shellcheck disable=SC1091
 . ./cluster.conf.sh
+
+ETCD_IPS=("${ALL_SERVER_IPS[@]:0:3}")
+ETCD_ENDPOINTS="https://${ALL_SERVER_IPS[0]}:2379,https://${ALL_SERVER_IPS[1]}:2379,https://${ALL_SERVER_IPS[2]}:2379"
+ETCD_NODES="etcd-node0=https://${ALL_SERVER_IPS[0]}:2380,etcd-node1=https://${ALL_SERVER_IPS[1]}:2380,etcd-node2=https://${ALL_SERVER_IPS[2]}:2380"
 
 # create a temp directory, put temp file in this, 
 # so we can clear it after the installation is over
@@ -75,9 +76,8 @@ function makeClusterTimeSyncUbuntu {
   apt install -y ./bins/ntpserver/ubuntu/* || true
   sed -i '/centos.pool.ntp.org/d' /etc/ntp.conf
   sed -i '/3.ubuntu.pool.ntp.org iburst/a pool 127.127.1.0 iburst' /etc/ntp.conf
-  systemctl restart ntpd
-  for node in "${ETCD_IPS[@]}"
-  do
+  systemctl restart ntp
+  for node in "${ETCD_IPS[@]}"; do
     scp -r ./bins/ntpserver/ubuntu "${USER}@${node}:~/"
     ssh "${USER}@${node}" "apt install -y ~/ubuntu/* || true"
     ssh "${USER}@${node}" "ntpdate ${MASTER_IP} || true"
@@ -87,9 +87,9 @@ function makeClusterTimeSyncUbuntu {
 # installETCD install a etcd instance on an node
 function installETCD {
   local nodeIP=$1
+  local order=$2
   scp ./tmp/etcd-v3.3.13-linux-amd64/etcd* "${USER}@${nodeIP}:/usr/local/bin"
   ssh "${USER}@${nodeIP}" "mkdir -p /etc/etcd && mkdir -p /var/lib/etcd"
-  order=$((i))
   scp ./tmp/etcd-node"${order}".conf "${USER}@${nodeIP}:/etc/etcd/etcd.conf"
   scp ./systemd/etcd.service "${USER}@${nodeIP}:${SERVICE_UNIT_LOCATION}/"
   ssh "${USER}@${nodeIP}" "systemctl daemon-reload && systemctl enable etcd && systemctl start etcd || true"
@@ -102,6 +102,7 @@ function installFlannel {
   scp tmp/flanneld "${USER}@${nodeIP}:/usr/local/bin"
   scp tmp/mk-docker-opts.sh "${USER}@${nodeIP}:/usr/local/bin"
   scp ./systemd/flanneld.service "${USER}@${nodeIP}:${SERVICE_UNIT_LOCATION}"
+  ssh "${USER}@${nodeIP}" "mkdir -p /etc/sysconfig || true"
   scp ./tmp/flanneld.conf "${USER}@${nodeIP}:/etc/sysconfig/flanneld.conf"
   ssh "${USER}@${nodeIP}" "systemctl daemon-reload && systemctl enable flanneld && systemctl start flanneld"
 }
@@ -109,7 +110,7 @@ function installFlannel {
 # installDocker install docker instance on a specified machine
 function installDocker {
   local nodeIP=$1
-  ssh "${USER}@${nodeIP}" "mkdir -p /etc/docker/"
+  ssh "${USER}@${nodeIP}" "mkdir -p /etc/docker/ || true"
   scp ./tmp/daemon.json "${USER}@${nodeIP}:/etc/docker/"
   scp ./tmp/docker/* "${USER}@${nodeIP}:/usr/local/bin/"
   scp ./systemd/docker.service "${USER}@${nodeIP}:${SERVICE_UNIT_LOCATION}/"
@@ -126,17 +127,17 @@ function installKubernetesMaster {
   sed "s@MASTER_IP@${MASTER_IP}@g ; s@ETCD_ENDPOINTS@${ETCD_ENDPOINTS}@" ./systemd/kube-apiserver.conf > ./tmp/kube-apiserver.conf
   cp -f ./systemd/kube-apiserver.service "${SERVICE_UNIT_LOCATION}/"
   cp -f ./tmp/kube-apiserver.conf /etc/kubernetes/
-  systemctl daemon-reload && systemctl enable kube-apiserver && systemctl start kube-apiserver && systemctl status kube-apiserver
+  systemctl daemon-reload && systemctl enable kube-apiserver && systemctl start kube-apiserver
 
   ## kube-controller-manager
   cp -f ./systemd/kube-controller-manager.service "${SERVICE_UNIT_LOCATION}/"
   cp -f ./systemd/kube-controller-manager.conf /etc/kubernetes/
-  systemctl daemon-reload && systemctl enable kube-controller-manager && systemctl start kube-controller-manager && systemctl status kube-controller-manager
+  systemctl daemon-reload && systemctl enable kube-controller-manager && systemctl start kube-controller-manager
 
   ## kube-scheduler
   cp -f ./systemd/kube-scheduler.service "${SERVICE_UNIT_LOCATION}/"
   cp -f ./systemd/kube-scheduler.conf /etc/kubernetes/
-  systemctl daemon-reload && systemctl enable kube-scheduler && systemctl start kube-scheduler && systemctl status kube-scheduler
+  systemctl daemon-reload && systemctl enable kube-scheduler && systemctl start kube-scheduler
 }
 
 # installKubernetsNode install k8s components in node
@@ -208,6 +209,7 @@ function main {
     --user=admin
   kubectl config use-context kubernetes
 
+  cd "$BASE_PATH"
   BOOTSTRAP_TOKEN=$(head -c 16 /dev/urandom | od -An -t x | tr -d ' ')
   sed "s/BOOTSTRAP_TOKEN/${BOOTSTRAP_TOKEN}/" ./ssl/token.csv > ./tmp/token.csv
 
@@ -247,12 +249,12 @@ function main {
 
   ### distribute files
   for node in "${ALL_SERVER_IPS[@]}"; do
-    scp ./tmp/token.csv bootstrap.kubeconfig kube-proxy.kubeconfig "${USER}@${node}:/etc/kubernetes/"
+    scp "$BASE_PATH/tmp/token.csv" bootstrap.kubeconfig kube-proxy.kubeconfig "${USER}@${node}:/etc/kubernetes/"
   done
 
-  # install etcd cluster
-  cd "${BASE_PATH}" || return
+  cd "$BASE_PATH" || return
 
+  # install etcd cluster
   # etcd cluster need cluster time sync
   # so we make an ntp server on the master node 
   # and node sync time according to master
@@ -266,14 +268,14 @@ function main {
   # generate etcd env file
   for i in "${!ETCD_IPS[@]}"; do
     order=$((i))
-    sed "s/ETCD_NAME_VAL/${order}/; s/NODE_IP_VAL/${ETCD_IPS[$i]}/; s/ETCD_NODES_VAL/${ETCD_NODES}/" ./systemd/etcd.conf > ./tmp/etcd-node"${order}".conf
+    sed "s/ETCD_NAME_VAL/${order}/; s/NODE_IP_VAL/${ETCD_IPS[$i]}/; s@ETCD_NODES_VAL@${ETCD_NODES}@" ./systemd/etcd.conf > ./tmp/etcd-node"${order}".conf
   done
 
   tar -C ./tmp -zxvf ./bins/etcd-v3.3.13-linux-amd64.tar.gz
   chmod +x ./tmp/etcd-v3.3.13-linux-amd64/etcd*
   chmod 644 ./systemd/etcd.service
   for i in "${!ETCD_IPS[@]}"; do
-    installETCD "${ETCD_IPS[$i]}"
+    installETCD "${ETCD_IPS[$i]}" "$((i))"
   done
 
   sleep 10
@@ -289,7 +291,7 @@ function main {
   tar -C tmp -zxvf ./bins/flannel-v0.11.0-linux-amd64.tar.gz
   chmod u+x tmp/flanneld
   chmod u+x tmp/mk-docker-opts.sh
-  sed "s@ETCD_ENDPOINTS_VAL@${ETCD_ENDPOINTS}@" ./systemd/flannel.conf > ./tmp/flannel.conf
+  sed "s@ETCD_ENDPOINTS_VAL@${ETCD_ENDPOINTS}@" ./systemd/flanneld.conf > ./tmp/flanneld.conf
 
 
   # register flannel subnet to etcd
@@ -321,7 +323,7 @@ function main {
   # install DOCKER
   cd "${BASE_PATH}" || return
   tar -C ./tmp -zxvf ./bins/docker-18.09.6.tgz
-  sed "s/DOCKER_LOCATION/${DOCKER_LOCATION}/" ./systemd/docker-daemon.json > ./tmp/daemon.json
+  sed "s@DOCKER_LOCATION@${DOCKER_LOCATION}@" ./systemd/docker-daemon.json > ./tmp/daemon.json
 
   for node in "${ALL_SERVER_IPS[@]}"; do
     installDocker "$node"
