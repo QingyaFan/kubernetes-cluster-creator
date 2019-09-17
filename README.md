@@ -11,7 +11,7 @@ The script was totally implemented using bash shell, mainly foucus on the offlin
 
 The result cluster contains flowing components:
 
-- ETCD 3.4.0
+- ETCD 3.3.13
 - Flannel 0.11.0
 - Docker 18.09.6
 - Kubernetes 1.15.3
