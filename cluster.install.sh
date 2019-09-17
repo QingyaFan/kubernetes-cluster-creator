@@ -162,6 +162,23 @@ function installKubernetsNode {
   ssh "${USER}@${nodeIP}" "mkdir -p /var/lib/kubelet && systemctl daemon-reload && systemctl enable kubelet && systemctl enable kube-proxy && systemctl start kubelet && systemctl start kube-proxy"
 }
 
+
+# loadPauseImage load pause image
+# on every node
+function loadPauseImage {
+  local nodeIP=$1
+  scp ./images/pause.latest.tar "${USER}@${nodeIP}:~/"
+  ssh "${USER}@${nodeIP}" "docker load -i pause.latest.tar"
+}
+
+# loadCoreDNSImage load coredns image
+# on every node
+function loadCoreDNSImage {
+  local nodeIP=$1
+  scp ./images/coredns.v1.6.2.tar "${USER}@${nodeIP}:~/"
+  ssh "${USER}@${nodeIP}" "docker load -i coredns.v1.6.2.tar"
+}
+
 function main {
   # config master can access node without auth
   # and stop firewall
@@ -345,6 +362,17 @@ function main {
   for node in "${NODE_IPS[@]}"; do
     installKubernetsNode "${node}"
   done
+
+  ## install pause
+  for node in "${NODE_IPS[@]}"; do
+    loadPauseImage "${node}"
+  done
+
+  ## install coredns
+  for node in "${NODE_IPS[@]}"; do
+    loadCoreDNSImage "${node}"
+  done
+  kubectl apply -f ./network/coredns.yaml
 }
 
 
