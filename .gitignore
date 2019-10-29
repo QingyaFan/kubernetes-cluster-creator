@@ -2,3 +2,4 @@ bins/*
 images/*
 tmp
 .DS_Store
+tests/*
